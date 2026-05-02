@@ -118,13 +118,35 @@ def speak(text):
 
 def get_voice_input():
     r = sr.Recognizer()
+    
+    # Set the silence timeout to 5 seconds
+    # This ensures the mic stops listening only after 5 seconds of total silence
+    r.pause_threshold = 3.0 
+    
+    # Increase non_speaking_duration to give more buffer for thinking
+    r.non_speaking_duration = 1.0 
+
     with sr.Microphone(sample_rate=48000) as source:
         try:
+            # Shorten noise adjustment to keep the app responsive
             r.adjust_for_ambient_noise(source, duration=0.3)
-            st.toast("🎤 Listening...", icon="🎙️")
-            audio = r.listen(source, timeout=5, phrase_time_limit=25)
+            
+            st.toast("🎤 Listening... (Stops after 3s silence)", icon="🎙️")
+            
+            # timeout: How long to wait for the user to START speaking
+            # phrase_time_limit: Maximum length of the entire response (increased for complex explanations)
+            audio = r.listen(source, timeout=10, phrase_time_limit=45)
+            
             return r.recognize_google(audio)
-        except: return None
+        except sr.WaitTimeoutError:
+            st.warning("No speech detected. Please try again.")
+            return None
+        except sr.UnknownValueError:
+            st.error("Could not understand the audio.")
+            return None
+        except Exception as e:
+            st.error(f"Mic Error: {str(e)}")
+            return None
 
 # --- Application Flow ---
 
