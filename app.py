@@ -8,7 +8,7 @@ from gtts import gTTS
 from textblob import TextBlob
 from dotenv import load_dotenv, find_dotenv
 from src.ml.matcher import RoleMatcher
-from src.agent.interviewer import InterviewAgent
+from src.agent.interviewer import InterviewAgent, TutorAgent 
 import speech_recognition as sr
 
 # Load environment variables
@@ -78,12 +78,13 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- Session State ---
+# --- Session State Initialization ---
 if "step" not in st.session_state: st.session_state.step = "setup"
 if "chat_history" not in st.session_state: st.session_state.chat_history = [] 
 if "agent" not in st.session_state: st.session_state.agent = None
 if "last_spoken" not in st.session_state: st.session_state.last_spoken = None
 if "q_count" not in st.session_state: st.session_state.q_count = 1 
+if "total_marks" not in st.session_state: st.session_state.total_marks = 0.0
 
 audio_placeholder = st.empty()
 
@@ -101,7 +102,7 @@ def safe_parse_json(ai_response):
     except Exception as e:
         return {
             "question": "System sync error. Could you repeat your last technical point?",
-            "technical_accuracy": 0, "depth": 0, "communication": 0, "confidence": 0,
+            "score": 0.0, "technical_accuracy": 0, "depth": 0, "communication": 0, "confidence": 0,
             "strengths": "N/A", "improvements": str(e), "feedback": "JSON Error", "suggestion": "N/A"
         }
 
@@ -118,25 +119,14 @@ def speak(text):
 
 def get_voice_input():
     r = sr.Recognizer()
-    
-    # Set the silence timeout to 5 seconds
-    # This ensures the mic stops listening only after 5 seconds of total silence
-    r.pause_threshold = 3.0 
-    
-    # Increase non_speaking_duration to give more buffer for thinking
+    r.pause_threshold = 5.0  # Core timeout feature
     r.non_speaking_duration = 1.0 
 
     with sr.Microphone(sample_rate=48000) as source:
         try:
-            # Shorten noise adjustment to keep the app responsive
             r.adjust_for_ambient_noise(source, duration=0.3)
-            
-            st.toast("🎤 Listening... (Stops after 3s silence)", icon="🎙️")
-            
-            # timeout: How long to wait for the user to START speaking
-            # phrase_time_limit: Maximum length of the entire response (increased for complex explanations)
+            st.toast("🎤 Listening... (Stops after 5s silence)", icon="🎙️")
             audio = r.listen(source, timeout=10, phrase_time_limit=45)
-            
             return r.recognize_google(audio)
         except sr.WaitTimeoutError:
             st.warning("No speech detected. Please try again.")
@@ -164,6 +154,7 @@ if st.session_state.step == "setup":
                 role = matcher.predict_role(user_skills)
                 st.session_state.agent = InterviewAgent(role)
                 st.session_state.matched_role = role
+                st.session_state.total_marks = 0.0 # Reset for new session
                 st.session_state.step = "interview"
                 st.rerun()
 
@@ -205,36 +196,30 @@ elif st.session_state.step == "interview":
 
     if user_text:
         st.session_state.chat_history.append({"role": "user", "content": user_text})
-        st.session_state.q_count += 1
+        
+        with st.spinner("Scoring..."):
+            ai_data = safe_parse_json(st.session_state.agent.get_next_question(user_text, st.session_state.q_count))
+            # ACCUMULATE SCORE (0.0 to 1.0)
+            st.session_state.total_marks += float(ai_data.get('score', 0))
+            st.session_state.chat_history.append({"role": "assistant", "content": ai_data['question'], "analytics": ai_data})
+            st.session_state.q_count += 1
         
         if st.session_state.q_count > 20:
             st.session_state.step = "evaluation"
-            st.rerun()
-        else:
-            with st.spinner("Scoring..."):
-                ai_data = safe_parse_json(st.session_state.agent.get_next_question(user_text, st.session_state.q_count))
-                st.session_state.chat_history.append({"role": "assistant", "content": ai_data['question'], "analytics": ai_data})
-            st.rerun()
+        st.rerun()
 
 # 3. EVALUATION
-# 3. EVALUATION PHASE
-# 3. EVALUATION PHASE
 elif st.session_state.step == "evaluation":
     st.markdown('<div class="step-tracker"><span class="step">1. PROFILE</span><span class="step">2. INTERVIEW</span><span class="step step-active">3. AUDIT</span></div>', unsafe_allow_html=True)
     st.title("🏆 Final Performance Audit")
     
-    # --- CRITICAL: Define final_stats at the start of the block ---
     ai_msgs = [m for m in st.session_state.chat_history if m["role"] == "assistant" and "analytics" in m]
     
     if ai_msgs:
         final_stats = ai_msgs[-1]["analytics"]
-        
-        # Calculate Scores
-        total_acc = sum([m["analytics"].get("technical_accuracy", 0) for m in ai_msgs])
-        possible_acc = len(ai_msgs) * 10
-        final_mark = (total_acc / possible_acc) * 20 if possible_acc > 0 else 0
+        # Use .get to ensure safety
+        final_mark = st.session_state.get("total_marks", 0.0)
 
-        # Metric Columns
         h1, h2, h3 = st.columns(3)
         with h1: st.markdown(f'<div class="metric-container"><h5>Final Grade</h5><h2>{final_mark:.1f}/20</h2></div>', unsafe_allow_html=True)
         with h2: st.markdown(f'<div class="metric-container"><h5>Mean Depth</h5><h2>{final_stats.get("depth")}/10</h2></div>', unsafe_allow_html=True)
@@ -244,7 +229,8 @@ elif st.session_state.step == "evaluation":
         tabs = st.tabs(["📋 Summary", "🧠 Breakdown", "🗺️ Roadmap"])
 
         with tabs[0]:
-            st.markdown(st.session_state.agent.get_feedback("\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])))
+            transcript = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])
+            st.markdown(st.session_state.agent.get_feedback(transcript))
             
         with tabs[1]: 
             st.subheader("Technical Findings")
@@ -254,19 +240,32 @@ elif st.session_state.step == "evaluation":
 
         with tabs[2]:
             st.success(f"### 🗺️ AI-Powered Learning Path: {st.session_state.matched_role}")
-            st.write(f"**Key Focus Area:** {final_stats.get('suggestion')}")
-            st.markdown("---")
             
-            with st.spinner("Generating specialized course links..."):
-                transcript = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.chat_history])
-                # Call the updated agent method
+            st.subheader("📚 Recommended Specialized Courses")
+            with st.spinner("Analyzing transcript for resources..."):
                 ai_course_advice = st.session_state.agent.get_course_recommendations(transcript)
                 st.markdown(ai_course_advice)
+
+            st.markdown("---")
+            st.subheader("🧠 Interactive Deep-Dive Tutor")
+            st.write("Pick a recommended topic to start an end-to-end masterclass.")
+            
+            main_suggestion = final_stats.get('suggestion', 'Technical Fundamentals')
+            selected_topic = st.text_input("Enter a topic to master:", value=main_suggestion)
+            
+            if st.button(f"📖 Start Masterclass on {selected_topic}"):
+                tutor = TutorAgent()
+                with st.spinner(f"Preparing tutorial for {selected_topic}..."):
+                    explanation = tutor.tutor_on_recommendation(selected_topic, transcript)
+                    st.markdown("---")
+                    st.info(f"### 🎓 Tutor Session: {selected_topic}")
+                    st.markdown(explanation)
             
             if st.button("🔄 NEW SESSION"):
                 st.session_state.step = "setup"
                 st.session_state.chat_history = []
                 st.session_state.q_count = 1
+                st.session_state.total_marks = 0.0
                 st.rerun()
     else:
-        st.error("No interview data available. Please complete an interview session first.")
+        st.error("No interview data available.")

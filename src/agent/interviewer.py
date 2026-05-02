@@ -146,3 +146,30 @@ class InterviewAgent:
         if analysis.sentiment.polarity > 0.1: return "Positive / Confident"
         elif analysis.sentiment.polarity < -0.1: return "Negative / Hesitant"
         return "Neutral / Formal"
+class TutorAgent:
+    def __init__(self):
+        self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        self.model = "llama-3.3-70b-versatile"
+
+    def tutor_on_recommendation(self, topic, transcript):
+        """
+        Deep-dives into a specific topic recommended by the course agent.
+        """
+        prompt = f"""
+        The candidate was recommended to study '{topic}' based on their interview.
+        Using the interview context: {transcript[-1000:]}
+        
+        Provide an 'End-to-End' masterclass on this topic:
+        1. **Core Concept**: Why is this critical for the role?
+        2. **Technical breakdown**: Explain the logic/math/architecture.
+        3. **Practical Example**: A real-world use case.
+        4. **Learning Path**: What to focus on in the recommended course.
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Tutor Error: {e}"
