@@ -10,7 +10,6 @@ def get_prompt(role, question_count):
     """
     Generates a dynamic prompt that increases in difficulty based on the question count.
     """
-    # Logic for increasing technical difficulty
     if question_count <= 5:
         difficulty = "EASY: Focus on fundamental syntax, core definitions, and basic concepts."
     elif question_count <= 12:
@@ -29,7 +28,7 @@ Difficulty Level: {difficulty}
 Your behavior:
 - Ask exactly ONE question at a time.
 - Evaluate the candidate's last response with high scrutiny.
-- Be analytical and slightly critical; detect vague or memorized answers.
+- Detect vague or memorized answers.
 - If an answer is weak → ask a challenging follow-up.
 - If an answer is strong → move to a more complex concept within the {difficulty} range.
 
@@ -41,7 +40,8 @@ Evaluation Criteria (score 0–10):
 
 Rules:
 - Respond ONLY in VALID JSON format.
-- DO NOT be overly nice or supportive.
+- Do NOT include any conversational text before or after the JSON.
+- DO NOT use markdown code blocks (like ```json).
 - Penalize incorrect or incomplete explanations.
 
 {{
@@ -68,16 +68,14 @@ class InterviewAgent:
 
     def get_next_question(self, user_input=None, question_count=1):
         """
-        Fetches the next question while adjusting difficulty dynamically.
+        Fetches the next question with a multi-layered JSON safety shield.
         """
-        # Dynamically refresh the system prompt with the current difficulty level
         system_msg = {"role": "system", "content": get_prompt(self.role, question_count)}
         
-        # Reset or update messages to include the new difficulty context
         if not self.messages:
             self.messages.append(system_msg)
         else:
-            self.messages[0] = system_msg # Update the first message (system prompt)
+            self.messages[0] = system_msg 
 
         if user_input:
             self.messages.append({"role": "user", "content": user_input})
@@ -85,31 +83,41 @@ class InterviewAgent:
             self.messages.append({"role": "user", "content": "I am ready. Please start the interview."})
 
         try:
+            # SHIELD 1: Force JSON mode at the API level
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=self.messages,
                 response_format={"type": "json_object"}
             )
             
-            ai_data = json.loads(completion.choices[0].message.content)
+            content = completion.choices[0].message.content
             
-            # Record the question in history to maintain context
-            self.messages.append({"role": "assistant", "content": ai_data['question']})
+            # SHIELD 2: Robust internal parsing
+            ai_data = json.loads(content)
+            
+            # Record assistant history
+            self.messages.append({"role": "assistant", "content": ai_data.get('question', '')})
             
             return ai_data
             
         except Exception as e:
+            # SHIELD 3: The "Emergency Fallback" dictionary
             return {
-                "error": str(e), 
-                "question": "System sync error. Could you please repeat your last technical point?",
-                "technical_accuracy": 0, "depth": 0, "communication": 0, "confidence": 0,
-                "strengths": "N/A", "improvements": "N/A", "feedback": "Error", "suggestion": "N/A"
+                "question": "I apologize, I encountered a technical sync issue. Could you please repeat your last technical point?",
+                "score": 0,
+                "technical_accuracy": 0,
+                "depth": 0,
+                "communication": 0,
+                "confidence": 0,
+                "strengths": "Connection fluctuation",
+                "improvements": "N/A",
+                "feedback": f"System Sync Error: {str(e)}",
+                "follow_up": "",
+                "suggestion": "Please ensure your internet connection is stable."
             }
 
     def get_feedback(self, transcript):
-        """
-        Generates final high-level feedback after the interview ends.
-        """
+        """Generates final report summary."""
         prompt = f"""
         Analyze this interview transcript for a {self.role} position.
         Summarize:
@@ -137,8 +145,3 @@ class InterviewAgent:
             return "Negative / Hesitant"
         else:
             return "Neutral / Formal"
-
-if __name__ == "__main__":
-    # Test for an AI Engineer role at question 15 (Advanced difficulty)
-    agent = InterviewAgent("AI Engineer")
-    print(agent.get_next_question(question_count=15))
