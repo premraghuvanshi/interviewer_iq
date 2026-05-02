@@ -195,30 +195,56 @@ elif st.session_state.step == "interview":
             st.rerun()
 
 # 3. EVALUATION
+# 3. EVALUATION PHASE
+# 3. EVALUATION PHASE
 elif st.session_state.step == "evaluation":
     st.markdown('<div class="step-tracker"><span class="step">1. PROFILE</span><span class="step">2. INTERVIEW</span><span class="step step-active">3. AUDIT</span></div>', unsafe_allow_html=True)
     st.title("🏆 Final Performance Audit")
     
+    # --- CRITICAL: Define final_stats at the start of the block ---
     ai_msgs = [m for m in st.session_state.chat_history if m["role"] == "assistant" and "analytics" in m]
     
-    # Calculate Corrected Scores (Max 20 Marks)
-    total_acc = sum([m["analytics"].get("technical_accuracy", 0) for m in ai_msgs])
-    possible_acc = len(ai_msgs) * 10
-    final_mark = (total_acc / possible_acc) * 20 if possible_acc > 0 else 0
+    if ai_msgs:
+        final_stats = ai_msgs[-1]["analytics"]
+        
+        # Calculate Scores
+        total_acc = sum([m["analytics"].get("technical_accuracy", 0) for m in ai_msgs])
+        possible_acc = len(ai_msgs) * 10
+        final_mark = (total_acc / possible_acc) * 20 if possible_acc > 0 else 0
 
-    h1, h2, h3 = st.columns(3)
-    with h1: st.markdown(f'<div class="metric-container"><h5>Final Grade</h5><h2>{final_mark:.1f}/20</h2></div>', unsafe_allow_html=True)
-    with h2: st.markdown(f'<div class="metric-container"><h5>Mean Depth</h5><h2>{ai_msgs[-1]["analytics"].get("depth")}/10</h2></div>', unsafe_allow_html=True)
-    with h3: st.markdown(f'<div class="metric-container"><h5>Confidence</h5><h2>{ai_msgs[-1]["analytics"].get("communication")}/10</h2></div>', unsafe_allow_html=True)
+        # Metric Columns
+        h1, h2, h3 = st.columns(3)
+        with h1: st.markdown(f'<div class="metric-container"><h5>Final Grade</h5><h2>{final_mark:.1f}/20</h2></div>', unsafe_allow_html=True)
+        with h2: st.markdown(f'<div class="metric-container"><h5>Mean Depth</h5><h2>{final_stats.get("depth")}/10</h2></div>', unsafe_allow_html=True)
+        with h3: st.markdown(f'<div class="metric-container"><h5>Confidence</h5><h2>{final_stats.get("communication")}/10</h2></div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    tabs = st.tabs(["📋 Summary", "🧠 Breakdown", "🗺️ Roadmap"])
-    with tabs[0]: st.markdown(st.session_state.agent.get_feedback("\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])))
-    with tabs[1]: 
-        st.write(f"**Strengths:** {ai_msgs[-1]['analytics'].get('strengths')}")
-        st.write(f"**Gaps:** {ai_msgs[-1]['analytics'].get('improvements')}")
-    with tabs[2]:
-        st.success(ai_msgs[-1]['analytics'].get('suggestion'))
-        if st.button("🔄 NEW SESSION"):
-            st.session_state.step = "setup"; st.session_state.chat_history = []; st.session_state.q_count = 1
-            st.rerun()
+        st.markdown("---")
+        tabs = st.tabs(["📋 Summary", "🧠 Breakdown", "🗺️ Roadmap"])
+
+        with tabs[0]:
+            st.markdown(st.session_state.agent.get_feedback("\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history])))
+            
+        with tabs[1]: 
+            st.subheader("Technical Findings")
+            st.write(f"**Strengths:** {final_stats.get('strengths')}")
+            st.write(f"**Gaps:** {final_stats.get('improvements')}")
+            st.info(f"**Interviewer Feedback:** {final_stats.get('feedback')}")
+
+        with tabs[2]:
+            st.success(f"### 🗺️ AI-Powered Learning Path: {st.session_state.matched_role}")
+            st.write(f"**Key Focus Area:** {final_stats.get('suggestion')}")
+            st.markdown("---")
+            
+            with st.spinner("Generating specialized course links..."):
+                transcript = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.chat_history])
+                # Call the updated agent method
+                ai_course_advice = st.session_state.agent.get_course_recommendations(transcript)
+                st.markdown(ai_course_advice)
+            
+            if st.button("🔄 NEW SESSION"):
+                st.session_state.step = "setup"
+                st.session_state.chat_history = []
+                st.session_state.q_count = 1
+                st.rerun()
+    else:
+        st.error("No interview data available. Please complete an interview session first.")

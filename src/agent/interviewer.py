@@ -145,3 +145,26 @@ class InterviewAgent:
             return "Negative / Hesitant"
         else:
             return "Neutral / Formal"
+    def get_course_recommendations(self, transcript):
+        """
+        Uses Groq to suggest specific courses with clickable URLs based on identified gaps.
+        """
+        prompt = f"""
+        Analyze this interview transcript for a {self.role} position:
+        {transcript}
+        
+        Identify the top 3 technical gaps. For each gap:
+        1. Suggest one specific, high-quality course or certification.
+        2. Provide a valid, clickable markdown URL to the course (e.g., Coursera, NPTEL, or YouTube).
+        3. Explain briefly why this course helps bridge that specific gap.
+
+        Respond ONLY in a clean, professional bullet-point format. Ensure the links are functional.
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception:
+            return "Unable to fetch specialized courses. Please check your internet connection."
