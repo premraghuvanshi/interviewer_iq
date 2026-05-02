@@ -35,6 +35,34 @@ class InterviewAgent:
             return ai_response
         except Exception as e:
             return f"Error: {e}"
+    def get_feedback(self, transcript):
+        prompt = f"""
+        You are an expert technical recruiter. Analyze the following interview transcript for a {self.role} position.
+        Provide a professional summary including:
+        1. Technical Strengths
+        2. Areas for Improvement
+        3. An overall 'Hire/No Hire' recommendation with a brief justification.
+        
+        Transcript:
+        {transcript}
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,  # CHANGED: Use self.model instead of hardcoded string
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Feedback Error: {e}"
+    def analyze_sentiment(self, text):
+        """Analyzes text to determine sentiment (Positive, Neutral, Negative)."""
+        analysis = TextBlob(text)
+        if analysis.sentiment.polarity > 0.1:
+            return "Positive / Confident"
+        elif analysis.sentiment.polarity < -0.1:
+            return "Negative / Hesitant"
+        else:
+            return "Neutral / Formal"
 
 if __name__ == "__main__":
     # Quick Test: Simulated Data Science Interview
