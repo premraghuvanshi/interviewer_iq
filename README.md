@@ -1,4 +1,4 @@
-⚖️ Interviewer IQ
+⚖️ InterviewIQ
 AI-Powered Technical Viva & Career Development Agent
 Developed by: Prem Raghuvanshi
 
