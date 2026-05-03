@@ -119,13 +119,13 @@ def speak(text):
 
 def get_voice_input():
     r = sr.Recognizer()
-    r.pause_threshold = 5.0  # Core timeout feature
+    r.pause_threshold = 2.0  # Core timeout feature
     r.non_speaking_duration = 1.0 
 
     with sr.Microphone(sample_rate=48000) as source:
         try:
             r.adjust_for_ambient_noise(source, duration=0.3)
-            st.toast("🎤 Listening... (Stops after 5s silence)", icon="🎙️")
+            st.toast("🎤 Listening... (Stops after 2s silence)", icon="🎙️")
             audio = r.listen(source, timeout=10, phrase_time_limit=45)
             return r.recognize_google(audio)
         except sr.WaitTimeoutError:
