@@ -15,7 +15,7 @@ import speech_recognition as sr
 load_dotenv(find_dotenv())
 
 # --- UI Configuration & Tech-Vibrant Styling ---
-st.set_page_config(page_title="Interviewer IQ", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="InterviewIQ", page_icon="⚖️", layout="wide")
 
 st.markdown("""
     <style>
@@ -143,7 +143,7 @@ def get_voice_input():
 # 1. SETUP
 if st.session_state.step == "setup":
     st.markdown('<div class="step-tracker"><span class="step step-active">1. PROFILE</span><span class="step">2. INTERVIEW</span><span class="step">3. AUDIT</span></div>', unsafe_allow_html=True)
-    st.title("⚖️ Interviewer IQ")
+    st.title("⚖️ InterviewIQ")
     
     col_l, col_r = st.columns([3, 2], gap="large")
     with col_l:
