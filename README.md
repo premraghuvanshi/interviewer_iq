@@ -50,7 +50,7 @@ ai_interviewer_project/
 Clone the repository:
 
 Bash
-git clone https://github.com/yourusername/interviewer-iq.git
+git clone https://github.com/premraghuvanshi/interviewer_iq.git
 cd interviewer-iq
 Install requirements:
 
