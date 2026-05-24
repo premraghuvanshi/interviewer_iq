@@ -85,26 +85,57 @@ if "agent" not in st.session_state: st.session_state.agent = None
 if "last_spoken" not in st.session_state: st.session_state.last_spoken = None
 if "q_count" not in st.session_state: st.session_state.q_count = 1 
 if "total_marks" not in st.session_state: st.session_state.total_marks = 0.0
+if "individual_marks" not in st.session_state: st.session_state.individual_marks = [] 
+if "matched_role" not in st.session_state: st.session_state.matched_role = "General Candidate"
+if "chosen_level" not in st.session_state: st.session_state.chosen_level = "Easy"
+if "active_question" not in st.session_state: st.session_state.active_question = None
 
 audio_placeholder = st.empty()
 
 # --- Helpers ---
 
+@st.cache_resource
+def get_cached_matcher():
+    """Initializes and caches the Machine Learning classifier to speed up loading loops."""
+    return RoleMatcher()
+
 def safe_parse_json(ai_response):
-    if isinstance(ai_response, dict): return ai_response
+    if isinstance(ai_response, dict): 
+        return ai_response
+        
+    fallback_text = f"Let's explore your experience with {st.session_state.get('matched_role', 'core engineering practices')}. Can you talk about a major technical bottleneck you resolved recently?"
+    
+    default_template = {
+        "question": fallback_text,
+        "score": 0.0, "technical_accuracy": 0, "depth": 0, "communication": 0, "confidence": 0,
+        "strengths": "Analyzing...", "improvements": "Awaiting more depth", 
+        "feedback": "Response captured.", "suggestion": "Core Fundamentals"
+    }
+
     try:
         content = ai_response.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1]
+        if content.endswith("```"):
+            content = content.rsplit("\n", 1)[0]
+            
+        content = content.strip()
         start_idx = content.find('{')
         end_idx = content.rfind('}')
+        
         if start_idx != -1 and end_idx != -1:
-            content = content[start_idx:end_idx + 1]
-        return json.loads(content)
+            content = content[start_idx:end_idx + 1].strip()
+            parsed_data = json.loads(content)
+            
+            if parsed_data.get("question") == "next conversational question" or not parsed_data.get("question"):
+                parsed_data["question"] = fallback_text
+                
+            return parsed_data
+            
     except Exception as e:
-        return {
-            "question": "System sync error. Could you repeat your last technical point?",
-            "score": 0.0, "technical_accuracy": 0, "depth": 0, "communication": 0, "confidence": 0,
-            "strengths": "N/A", "improvements": str(e), "feedback": "JSON Error", "suggestion": "N/A"
-        }
+        default_template["improvements"] = f"Parsing Exception: {str(e)}"
+
+    return default_template
 
 def speak(text):
     if st.session_state.last_spoken != text:
@@ -119,7 +150,7 @@ def speak(text):
 
 def get_voice_input():
     r = sr.Recognizer()
-    r.pause_threshold = 2.0  # Core timeout feature
+    r.pause_threshold = 2.0  
     r.non_speaking_duration = 1.0 
 
     with sr.Microphone(sample_rate=48000) as source:
@@ -147,14 +178,30 @@ if st.session_state.step == "setup":
     
     col_l, col_r = st.columns([3, 2], gap="large")
     with col_l:
-        user_skills = st.text_area("Technical Background", height=300, placeholder="e.g., AIML Student at JIT, Python, SQL...")
+        user_skills = st.text_area("Technical Background", height=250, placeholder="e.g., AIML Student at JIT, Python, SQL...")
+        
+        selected_difficulty = st.selectbox(
+            "Select Initial Target Viva Tier Difficulty:",
+            options=["Easy", "Medium", "Hard"],
+            index=0,
+            help="Configures the seed metrics to adjust starting baseline prompt behaviors."
+        )
+        
         if st.button("🚀 START ASSESSMENT"):
             if user_skills:
-                matcher = RoleMatcher()
+                matcher = get_cached_matcher()
                 role = matcher.predict_role(user_skills)
-                st.session_state.agent = InterviewAgent(role)
+                
+                # CRITICAL STRUCTURAL FIX: Hydrate app state objects explicitly to session memory bounds
                 st.session_state.matched_role = role
-                st.session_state.total_marks = 0.0 # Reset for new session
+                st.session_state.chosen_level = selected_difficulty
+                st.session_state.agent = InterviewAgent(role, starting_level=selected_difficulty)
+                
+                st.session_state.total_marks = 0.0 
+                st.session_state.individual_marks = [] 
+                st.session_state.chat_history = []
+                st.session_state.q_count = 1
+                st.session_state.active_question = None
                 st.session_state.step = "interview"
                 st.rerun()
 
@@ -162,10 +209,20 @@ if st.session_state.step == "setup":
 elif st.session_state.step == "interview":
     st.markdown('<div class="step-tracker"><span class="step">1. PROFILE</span><span class="step step-active">2. INTERVIEW</span><span class="step">3. AUDIT</span></div>', unsafe_allow_html=True)
     
+    # CRITICAL FALLBACK PROTECTION: Re-hydrate agent tracking dynamically if lost during page-refresh spikes
+    if st.session_state.agent is None:
+        st.session_state.agent = InterviewAgent(st.session_state.matched_role, starting_level=st.session_state.chosen_level)
+
     with st.sidebar:
         st.title("📋 Live Progress")
         st.write(f"Question **{st.session_state.q_count}** / 20")
         st.progress(st.session_state.q_count / 20)
+        
+        if st.session_state.individual_marks:
+            st.write("### Score Breakdown")
+            for idx, mark in enumerate(st.session_state.individual_marks):
+                status_icon = "✅" if mark == 1.0 else "⚠️" if mark == 0.5 else "❌"
+                st.write(f"Q{idx+1}: {status_icon} **{mark} Mark**")
         
         ai_data_points = [m["analytics"] for m in st.session_state.chat_history if m["role"] == "assistant" and "analytics" in m]
         if ai_data_points:
@@ -176,15 +233,20 @@ elif st.session_state.step == "interview":
             st.session_state.step = "evaluation"
             st.rerun()
 
+    # Render persistent conversation cards cleanly without state dropping
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]): st.write(msg["content"])
 
-    if not st.session_state.chat_history:
+    # CRITICAL RUNTIME FIX: Handle initial turn initialization via non-volatile session boundaries
+    if not st.session_state.chat_history and st.session_state.active_question is None:
         ai_data = safe_parse_json(st.session_state.agent.get_next_question(question_count=st.session_state.q_count))
+        st.session_state.active_question = ai_data['question']
         st.session_state.chat_history.append({"role": "assistant", "content": ai_data['question'], "analytics": ai_data})
         st.rerun()
 
-    speak(st.session_state.chat_history[-1]["content"])
+    # Trigger Text-To-Speech asset playback
+    if st.session_state.chat_history:
+        speak(st.session_state.chat_history[-1]["content"])
 
     user_text = None
     c_in, c_mic = st.columns([6, 1])
@@ -199,8 +261,24 @@ elif st.session_state.step == "interview":
         
         with st.spinner("Scoring..."):
             ai_data = safe_parse_json(st.session_state.agent.get_next_question(user_text, st.session_state.q_count))
-            # ACCUMULATE SCORE (0.0 to 1.0)
-            st.session_state.total_marks += float(ai_data.get('score', 0))
+            
+            raw_accuracy = float(ai_data.get('technical_accuracy', 0))
+            
+            if raw_accuracy >= 5:
+                assigned_mark = 1.0
+                st.toast("Excellent Answer!", icon="🌟")
+            elif raw_accuracy > 0:
+                assigned_mark = 0.5
+                st.toast("Partial Credit awarded.", icon="📝")
+            else:
+                assigned_mark = 0.0
+                st.toast("Incorrect or missing answer.", icon="❌")
+            
+            st.session_state.individual_marks.append(assigned_mark)
+            st.session_state.total_marks += assigned_mark
+            
+            # Commit the next valid question to active tracking arrays
+            st.session_state.active_question = ai_data['question']
             st.session_state.chat_history.append({"role": "assistant", "content": ai_data['question'], "analytics": ai_data})
             st.session_state.q_count += 1
         
@@ -217,13 +295,12 @@ elif st.session_state.step == "evaluation":
     
     if ai_msgs:
         final_stats = ai_msgs[-1]["analytics"]
-        # Use .get to ensure safety
         final_mark = st.session_state.get("total_marks", 0.0)
 
         h1, h2, h3 = st.columns(3)
         with h1: st.markdown(f'<div class="metric-container"><h5>Final Grade</h5><h2>{final_mark:.1f}/20</h2></div>', unsafe_allow_html=True)
-        with h2: st.markdown(f'<div class="metric-container"><h5>Mean Depth</h5><h2>{final_stats.get("depth")}/10</h2></div>', unsafe_allow_html=True)
-        with h3: st.markdown(f'<div class="metric-container"><h5>Confidence</h5><h2>{final_stats.get("communication")}/10</h2></div>', unsafe_allow_html=True)
+        with h2: st.markdown(f'<div class="metric-container"><h5>Mean Depth</h5><h2>{final_stats.get("depth", 0)}/10</h2></div>', unsafe_allow_html=True)
+        with h3: st.markdown(f'<div class="metric-container"><h5>Confidence</h5><h2>{final_stats.get("communication", 0)}/10</h2></div>', unsafe_allow_html=True)
 
         st.markdown("---")
         tabs = st.tabs(["📋 Summary", "🧠 Breakdown", "🗺️ Roadmap"])
@@ -234,12 +311,12 @@ elif st.session_state.step == "evaluation":
             
         with tabs[1]: 
             st.subheader("Technical Findings")
-            st.write(f"**Strengths:** {final_stats.get('strengths')}")
-            st.write(f"**Gaps:** {final_stats.get('improvements')}")
-            st.info(f"**Interviewer Feedback:** {final_stats.get('feedback')}")
+            st.write(f"**Strengths:** {final_stats.get('strengths', 'N/A')}")
+            st.write(f"**Gaps:** {final_stats.get('improvements', 'N/A')}")
+            st.info(f"**Interviewer Feedback:** {final_stats.get('feedback', 'No additional feedback entries recorded.')}")
 
         with tabs[2]:
-            st.success(f"### 🗺️ AI-Powered Learning Path: {st.session_state.matched_role}")
+            st.success(f"### 🗺️ AI-Powered Learning Path: {st.session_state.get('matched_role', 'General Candidate')}")
             
             st.subheader("📚 Recommended Specialized Courses")
             with st.spinner("Analyzing transcript for resources..."):
@@ -266,6 +343,8 @@ elif st.session_state.step == "evaluation":
                 st.session_state.chat_history = []
                 st.session_state.q_count = 1
                 st.session_state.total_marks = 0.0
+                st.session_state.individual_marks = []
+                st.session_state.active_question = None
                 st.rerun()
     else:
         st.error("No interview data available.")
